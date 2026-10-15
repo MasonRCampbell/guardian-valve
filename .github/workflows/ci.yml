@@ -1,0 +1,22 @@
+name: Valve CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  safety-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax validation
+        run: |
+          for script in src/*.mjs test/*.mjs; do node --check "$script"; done
+      - name: Run project-independent safety suite
+        run: node --test test/*.test.mjs
