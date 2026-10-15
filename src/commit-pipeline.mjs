@@ -19,7 +19,7 @@ function run() {
   if (!existsSync(manifestPath)) return console.log('No release manifest');
   const m = JSON.parse(readFileSync(manifestPath, 'utf8'));
   if (m.approved !== true || m.publish !== true) throw new Error('Release not explicitly approved for publication');
-  const signingKey = process.env.VALVE_SIGNING_KEY;
+  const signingKey = process.env.VALVE_SIGNING_KEY || (existsSync(process.env.VALVE_SIGNING_KEY_FILE || 'C:/ProgramData/ValvePipeline/signing.key') ? readFileSync(process.env.VALVE_SIGNING_KEY_FILE || 'C:/ProgramData/ValvePipeline/signing.key','utf8').trim() : undefined);
   if (!signingKey || signingKey.length < 32) throw new Error('Release signing key unavailable');
   if (typeof m.signature !== 'string' || !/^[a-f0-9]{64}$/i.test(m.signature)) throw new Error('Missing signed approval');
   const {signature,...payload} = m;
