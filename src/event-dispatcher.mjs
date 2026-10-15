@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { recordFailure } from './failure-register.mjs';
+import { scanGitHub } from './github-ci-watch.mjs';
 
 // Handles explicitly signed and approved manifests only. Never approves or deploys itself.
 const dir = resolve(process.env.VALVE_QUEUE_DIR || 'C:/ProgramData/ValvePipeline/approved');
@@ -59,3 +60,17 @@ function scan() {
 watch(dir, () => scan());
 scan();
 console.log('Valve event dispatcher listening: '+dir);
+
+let ciWatchRunning = false;
+async function watchCiFailures() {
+  if (ciWatchRunning) return;
+  ciWatchRunning = true;
+  try {
+    const result = await scanGitHub();
+    console.log('Valve CI watch', JSON.stringify(result));
+  } catch (error) {
+    logFailure({ project:'Valve', operation:'github-ci-watch', category:'watch-failed', message:error.message, retryable:true });
+  } finally { ciWatchRunning = false; }
+}
+void watchCiFailures();
+setInterval(() => { void watchCiFailures(); }, 60000);
