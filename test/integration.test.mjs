@@ -1,0 +1,51 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { createHmac } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+const testRoot = new URL('.', import.meta.url);
+function run(command,args,cwd,env={}) {
+ const r=spawnSync(command,args,{cwd,encoding:'utf8',windowsHide:true,timeout:90000,env:{...process.env,...env}});
+ if(r.error||r.status!==0) throw Error(command+' '+args.join(' ')+': '+(r.stderr||r.error?.message||r.status));
+ return r.stdout.trim();
+}
+test('signed release commits and pushes to isolated local bare remote',()=>{
+ const root=mkdtempSync(join(tmpdir(),'valve-release-'));
+ const origin=join(root,'origin.git'),work=join(root,'working'),registry=join(root,'projects.json'),manifest=join(root,'release.json'),log=join(root,'failures.jsonl');
+ mkdirSync(work);
+ run('git',['init','--bare',origin],root);
+ run('git',['init','-b','main'],work);
+ run('git',['config','user.name','Valve Test'],work);
+ run('git',['config','user.email','valve-test@example.invalid'],work);
+ run('git',['remote','add','origin',origin],work);
+ writeFileSync(join(work,'demo.txt'),'before\n');
+ run('git',['add','demo.txt'],work);
+ run('git',['commit','-m','initial'],work);
+ run('git',['push','-u','origin','main'],work);
+ writeFileSync(join(work,'demo.txt'),'after\n');
+ writeFileSync(registry,JSON.stringify({projects:[{id:'TestProject',path:work,branch:'main',remote:'origin'}]}));
+ const payload={project:'TestProject',approved:true,publish:true,repository:work,branch:'main',paths:['demo.txt'],message:'test: signed release',checks:[[process.execPath,'--version']]};
+ const key='unit-test-valve-signing-key-abcdefghijklmnopqrstuvwxyz';
+ const signature=createHmac('sha256',key).update(JSON.stringify(payload)).digest('hex');
+ writeFileSync(manifest,JSON.stringify({...payload,signature}));
+ run(process.execPath,[fileURLToPath(new URL('../src/commit-pipeline.mjs',testRoot))],work,{VALVE_RELEASE_MANIFEST:manifest,VALVE_SIGNING_KEY:key,VALVE_PROJECTS_FILE:registry,VALVE_FAILURE_LOG:log});
+ assert.equal(run('git',['show','main:demo.txt'],origin),'after');
+ assert.equal(run('git',['log','-1','--format=%s'],work),'test: signed release');
+ assert.equal(existsSync(manifest),false);
+ assert.ok(readdirSync(root).some(x=>x.startsWith('release.json.submitted-')));
+});
+test('untrusted release signature cannot modify the repository',()=>{
+ const root=mkdtempSync(join(tmpdir(),'valve-reject-'));
+ const work=join(root,'work'),manifest=join(root,'release.json'),registry=join(root,'projects.json'),log=join(root,'failure.jsonl');
+ mkdirSync(work);
+ run('git',['init','-b','main'],work);
+ writeFileSync(registry,JSON.stringify({projects:[{id:'TestProject',path:work,branch:'main',remote:'origin'}]}));
+ writeFileSync(manifest,JSON.stringify({project:'TestProject',approved:true,publish:true,repository:work,branch:'main',paths:['demo.txt'],signature:'0'.repeat(64)}));
+ const r=spawnSync(process.execPath,[fileURLToPath(new URL('../src/commit-pipeline.mjs',testRoot))],{cwd:work,encoding:'utf8',env:{...process.env,VALVE_RELEASE_MANIFEST:manifest,VALVE_SIGNING_KEY:'unit-test-valve-signing-key-abcdefghijklmnopqrstuvwxyz',VALVE_PROJECTS_FILE:registry,VALVE_FAILURE_LOG:log}});
+ assert.equal(r.status,1);
+ assert.match(readFileSync(log,'utf8'),/Release signature invalid/);
+ assert.equal(run('git',['status','--porcelain'],work),'');
+});
