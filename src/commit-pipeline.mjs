@@ -46,11 +46,11 @@ function run() {
     const r = spawnSync(command[0], command.slice(1), {cwd, windowsHide:true, encoding:'utf8', timeout:600000, shell:false});
     if (r.status !== 0 || r.error) throw new Error('Validation failed (' + command[0] + '): ' + (r.stderr || r.error?.message || r.status));
   }
+  git(cwd, ['fetch', 'origin', m.branch]);
+  if (git(cwd, ['rev-parse', 'HEAD']) !== git(cwd, ['rev-parse', 'origin/' + m.branch])) throw new Error('Local branch differs from remote; manual reconciliation required');
   git(cwd, ['add', '--', ...m.paths]);
   const staged = git(cwd, ['diff', '--cached', '--name-only']).split('\n').filter(Boolean);
   if (!staged.length || staged.some(p => !expected.has(p))) throw new Error('Nothing valid staged');
-  git(cwd, ['fetch', 'origin', m.branch]);
-  if (git(cwd, ['rev-parse', 'HEAD']) !== git(cwd, ['rev-parse', 'origin/' + m.branch])) throw new Error('Local branch differs from remote; manual reconciliation required');
   git(cwd, ['commit', '-m', String(m.message || 'chore: approved release').slice(0, 160)]);
   git(cwd, ['push', 'origin', 'HEAD:refs/heads/' + m.branch]);
   const sha = git(cwd, ['rev-parse', 'HEAD']);

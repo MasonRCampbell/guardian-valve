@@ -1,0 +1,43 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {createHmac} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+const worker=fileURLToPath(new URL('../src/commit-pipeline.mjs',import.meta.url));
+function git(cwd,...args) {
+ const r=spawnSync('git',args,{cwd,encoding:'utf8',windowsHide:true,timeout:20000});
+ assert.equal(r.status,0,r.stderr);
+ return r.stdout.trim();
+}
+test('remote divergence never stages approved local changes',()=>{
+ const base=mkdtempSync(join(tmpdir(),'valve-divergence-'));
+ const remote=join(base,'origin.git'),work=join(base,'working'),other=join(base,'other');
+ git(base,'init','--bare',remote);
+ mkdirSync(work);
+ git(work,'init','-b','main');
+ git(work,'config','user.name','Test');
+ git(work,'config','user.email','test@example.invalid');
+ git(work,'remote','add','origin',remote);
+ writeFileSync(join(work,'demo.txt'),'original');
+ git(work,'add','demo.txt');git(work,'commit','-m','initial');
+ git(work,'push','-u','origin','main');
+ git(base,'clone','-b','main',remote,other);
+ git(other,'config','user.name','Test');
+ git(other,'config','user.email','test@example.invalid');
+ writeFileSync(join(other,'remote-only.txt'),'new');
+ git(other,'add','remote-only.txt');git(other,'commit','-m','remote update');git(other,'push','origin','main');
+ writeFileSync(join(work,'demo.txt'),'local pending change');
+ const registry=join(base,'projects.json'),manifest=join(base,'release.json'),log=join(base,'failures.jsonl');
+ const key='test-signature-key-with-more-than-32-chars';
+ writeFileSync(registry,JSON.stringify({projects:[{id:'TestProject',path:work,branch:'main',remote:'origin'}]}));
+ const payload={project:'TestProject',approved:true,publish:true,repository:work,branch:'main',paths:['demo.txt'],message:'approved demo',checks:[]};
+ writeFileSync(manifest,JSON.stringify({...payload,signature:createHmac('sha256',key).update(JSON.stringify(payload)).digest('hex')}));
+ const r=spawnSync(process.execPath,[worker],{cwd:work,encoding:'utf8',windowsHide:true,env:{...process.env,VALVE_RELEASE_MANIFEST:manifest,VALVE_SIGNING_KEY:key,VALVE_PROJECTS_FILE:registry,VALVE_FAILURE_LOG:log}});
+ assert.equal(r.status,1);
+ assert.match(r.stderr,/differs from remote/);
+ assert.equal(git(work,'diff','--cached','--name-only'),'');
+ assert.equal(readFileSync(join(work,'demo.txt'),'utf8'),'local pending change');
+});
