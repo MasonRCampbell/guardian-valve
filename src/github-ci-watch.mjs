@@ -1,4 +1,4 @@
-import {readFileSync,writeFileSync,renameSync,existsSync,mkdirSync} from 'node:fs';
+﻿import {readFileSync,writeFileSync,renameSync,existsSync,mkdirSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
@@ -20,7 +20,7 @@ function readGitCredential(){
 function readProjects(path){
  const data=JSON.parse(readFileSync(path,'utf8'));
  const projects=Array.isArray(data.projects)?data.projects:[];
- return [{id:'Valve',path:resolve('C:/GuardianControl/ValveSource'),branch:'main',remote:'origin'},...projects];
+ return projects.some(p=>p.id==='Valve') ? projects : [{id:'Valve',path:resolve('C:/GuardianControl/ValveSource'),branch:'main',remote:'origin'},...projects];
 }
 export async function scanGitHub(options={}){
  const registry=resolve(options.registry||process.env.VALVE_PROJECTS_FILE||'C:/GuardianControl/Valve/projects.json');
@@ -89,3 +89,4 @@ if(isDirect){
   console.error('Valve GitHub watcher failed: '+e.message);process.exitCode=1;
  });
 }
+
