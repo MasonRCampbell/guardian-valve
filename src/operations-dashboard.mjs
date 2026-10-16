@@ -1,0 +1,17 @@
+import {createServer} from 'node:http';
+import {readFileSync,existsSync} from 'node:fs';
+const reconcile=process.env.VALVE_RECONCILE_FILE||'C:/ProgramData/ValvePipeline/reconciliation.json';
+const failures=process.env.VALVE_FAILURE_LOG||'C:/ProgramData/ValvePipeline/failures.jsonl';
+const production=process.env.VALVE_PRODUCTION_STATE||'C:/ProgramData/ValvePipeline/production-revision.json';
+const port=Number(process.env.VALVE_DASHBOARD_PORT||8765);
+const esc=s=>String(s??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const read=p=>{try{return JSON.parse(readFileSync(p,'utf8'))}catch{return null}};
+function page(){
+ const state=read(reconcile),prod=read(production);
+ let lines=[];try{lines=readFileSync(failures,'utf8').split(/\r?\n/).filter(Boolean)}catch{}
+ const recent=lines.slice(-20).reverse().flatMap(x=>{try{return [JSON.parse(x)]}catch{return []}});
+ const cards=(state?.projects||[]).map(p=>'<article><h2>'+esc(p.project)+'</h2><p class="'+(p.blocked?'warn':'ok')+'">'+(p.blocked?'Attention':'Aligned')+'</p><p>Branch: '+esc(p.branch)+'</p><p>Uncommitted entries: '+esc(p.changedFileCount)+'</p><p>Ahead / behind: '+esc(p.ahead)+' / '+esc(p.behind)+'</p><small>'+esc(p.issues.join(', ')||'No outstanding Git issues')+'</small></article>').join('');
+ const rows=recent.map(f=>'<tr><td>'+esc(f.timestamp)+'</td><td>'+esc(f.project)+'</td><td>'+esc(f.operation)+'</td><td>'+esc(f.category)+'</td><td>'+esc(f.message)+'</td></tr>').join('');
+ return '<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="refresh" content="20"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Guardian Valve Operations</title><style>body{background:#0c111b;color:#e7eef9;font:15px system-ui;margin:0;padding:36px;max-width:1400px}h1{font-size:27px;margin-bottom:8px}h2{font-size:18px}small,.muted{color:#94a3b8}section{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin:24px 0}article{background:#172131;border:1px solid #344155;border-radius:12px;padding:20px}article p{margin:8px 0}.ok{color:#55dfa5}.warn{color:#ffbd69}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:10px;border-bottom:1px solid #344155;vertical-align:top}th{color:#9fb2cc} .scroll{overflow:auto} </style><h1>Guardian Valve · Operations</h1><p class="muted">Read-only dashboard · refreshes every 20 seconds · reconciliation snapshot: '+esc(state?.checkedAt||'unavailable')+'</p><section>'+cards+'</section><article><h2>SitRep production revision</h2><p class="'+(prod?.status==='verified'?'ok':'warn')+'">'+esc(prod?.status||'Unknown')+'</p><p>Expected: '+esc(prod?.expected)+'</p><p>Actual: '+esc(prod?.actual)+'</p><small>Checked: '+esc(prod?.checkedAt)+'</small></article><h2>Recent failure events</h2><div class="scroll"><table><thead><tr><th>Timestamp</th><th>Project</th><th>Operation</th><th>Category</th><th>Message</th></tr></thead><tbody>'+rows+'</tbody></table></div></html>';
+}
+createServer((req,res)=>{if(req.url!=='/'){res.writeHead(404);return res.end('Not found')}res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"});res.end(page())}).listen(port,'127.0.0.1',()=>console.log('Valve dashboard http://127.0.0.1:'+port));
