@@ -2,6 +2,7 @@ import {readFileSync,writeFileSync,mkdirSync,existsSync,renameSync,readdirSync} 
 import {resolve,join,dirname,basename} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {retryDecision} from './retry-policy.mjs';
 const registryFile=resolve(process.env.VALVE_PROJECTS_FILE||'C:/GuardianControl/Valve/projects.json');
 const queue=resolve(process.env.VALVE_QUEUE_DIR||'C:/ProgramData/ValvePipeline/approved');
 const ledger=resolve(process.env.VALVE_RELEASE_LEDGER||'C:/ProgramData/ValvePipeline/releases');
@@ -13,7 +14,7 @@ function output(id,status,details){return {id,status,checkedAt:new Date().toISOS
 function reconcileOne(file,registry){
  const name=basename(file),id=createHash('sha256').update(name).digest('hex').slice(0,20),stateFile=join(ledger,id+'.json');
  const old=existsSync(stateFile)?JSON.parse(readFileSync(stateFile,'utf8')):null;
- if(old?.status==='verified'||old?.status==='blocked')return old;
+ if(['verified','blocked','superseded','exhausted'].includes(old?.status))return old;
  const match=name.match(/^release-([A-Za-z0-9_-]+)-.*\.json\.submitted-([a-f0-9]{12})$/);
  if(!match)return null;
  const m=JSON.parse(readFileSync(file,'utf8'));
@@ -27,14 +28,17 @@ function reconcileOne(file,registry){
  if(remote!==head){const result=output(id,'pending',{project:m.project,sha:head,reason:'GitHub branch does not match submitted revision'});save(stateFile,result);return result}
  const deployments=Array.isArray(project.deployments)?project.deployments:null;
  if(!deployments||deployments.length===0){const result=output(id,'pending',{project:m.project,sha:head,reason:'Production deployment targets have not been configured'});save(stateFile,result);return result}
+ const retry=retryDecision(old);
+ if(retry.action==='wait')return old;
+ if(retry.action==='exhausted'){const result=output(id,'exhausted',{project:m.project,sha:head,reason:'Verification retry limit reached',attempts:retry.attempts});save(stateFile,result);return result;}
  const config={project:m.project,repository:project.path,branch:project.branch,sha:head,deployments};
  const requestPath=join(ledger,id+'-verification.json');
  save(requestPath,config);
  const child=spawnSync(process.execPath,[verifier,requestPath],{encoding:'utf8',timeout:120000,windowsHide:true});
  const proof=join(proofs,m.project+'-'+head.slice(0,12)+'.json');
- if(child.status!==0||!existsSync(proof)){const result=output(id,'pending',{project:m.project,sha:head,reason:'Production verification incomplete',retryable:true});save(stateFile,result);return result}
+ if(child.status!==0||!existsSync(proof)){const result=output(id,'pending',{project:m.project,sha:head,reason:'Production verification incomplete',retryable:true,attempts:retry.attempts,nextRetryAt:retry.nextRetryAt});save(stateFile,result);return result}
  const verified=JSON.parse(readFileSync(proof,'utf8'));
- if(verified.sha!==head||verified.status!=='verified'||verified.checks?.length!==deployments.length+1){const result=output(id,'pending',{project:m.project,sha:head,reason:'Verification proof incomplete'});save(stateFile,result);return result}
+ if(verified.sha!==head||verified.status!=='verified'||verified.checks?.length!==deployments.length+1){const result=output(id,'pending',{project:m.project,sha:head,reason:'Verification proof incomplete',attempts:retry.attempts,nextRetryAt:retry.nextRetryAt});save(stateFile,result);return result}
  const result=output(id,'verified',{project:m.project,sha:head,checks:verified.checks});save(stateFile,result);return result;
 }
 export function reconcileReleases(){
