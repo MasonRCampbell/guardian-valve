@@ -1,3 +1,4 @@
+import { verifySitRepProduction } from './production-revision-watch.mjs';
 import { watch, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -74,3 +75,7 @@ async function watchCiFailures() {
 }
 void watchCiFailures();
 setInterval(() => { void watchCiFailures(); }, 60000);
+
+async function checkLiveSitRep(){try{await verifySitRepProduction()}catch(e){console.error('SITREP_PRODUCTION_CHECK_FAILED',e.message)}}
+void checkLiveSitRep();
+setInterval(()=>{void checkLiveSitRep()},300000);
