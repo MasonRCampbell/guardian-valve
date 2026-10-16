@@ -1,0 +1,22 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,writeFileSync,readdirSync,readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {createHmac} from 'node:crypto';
+test('approved submission is signed and queued without touching a repository',()=>{
+ const d=mkdtempSync(join(tmpdir(),'valve-submit-ok-'));
+ const registry=join(d,'projects.json'),request=join(d,'request.json');
+ writeFileSync(registry,JSON.stringify({projects:[{id:'Demo',path:d,branch:'main',remote:'origin'}]}));
+ writeFileSync(request,JSON.stringify({project:'Demo',approved:true,publish:true,paths:['file.txt'],message:'Demo release'}));
+ const key='test-key-123456789012345678901234567890';
+ const r=spawnSync(process.execPath,['C:/GuardianControl/ValveSource/src/submit-release.mjs',request],{env:{...process.env,VALVE_PROJECTS_FILE:registry,VALVE_QUEUE_DIR:d,VALVE_SIGNING_KEY:key},encoding:'utf8'});
+ assert.equal(r.status,0,r.stderr);
+ const names=readdirSync(d).filter(x=>x.startsWith('release-'));
+ assert.equal(names.length,1);
+ const obj=JSON.parse(readFileSync(join(d,names[0]),'utf8'));
+ const {signature,...payload}=obj;
+ assert.equal(signature,createHmac('sha256',key).update(JSON.stringify(payload)).digest('hex'));
+ assert.equal(payload.project,'Demo');
+});
