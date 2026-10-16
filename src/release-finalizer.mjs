@@ -22,7 +22,7 @@ function reconcileOne(file,registry){
   const result=output(id,'blocked',{project:m.project,reason:'Registry mismatch'});save(stateFile,result);return result;
  }
  const head=git(project.path,'rev-parse','HEAD');
- if(!head.startsWith(match[2])){const result=output(id,'blocked',{project:m.project,reason:'Local revision no longer matches submitted manifest'});save(stateFile,result);return result}
+ if(!head.startsWith(match[2])){const result=output(id,'superseded',{project:m.project,reason:'A newer local revision replaced this historical submission'});save(stateFile,result);return result}
  const remote=git(project.path,'ls-remote','origin','refs/heads/'+project.branch).split(/\s+/)[0];
  if(remote!==head){const result=output(id,'pending',{project:m.project,sha:head,reason:'GitHub branch does not match submitted revision'});save(stateFile,result);return result}
  const deployments=Array.isArray(project.deployments)?project.deployments:null;
